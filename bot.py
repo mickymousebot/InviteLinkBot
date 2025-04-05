@@ -6,57 +6,62 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 API_ID = int(os.getenv("API_ID"))
 API_HASH = os.getenv("API_HASH")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-CHANNEL_ID = int(os.getenv("CHANNEL_ID"))  # Example: -100xxxxxxxxxx
-OWNER_ID = int(os.getenv("OWNER_ID"))      # Your Telegram User ID (int)
+CHANNEL_ID = int(os.getenv("CHANNEL_ID"))
+OWNER_ID = int(os.getenv("OWNER_ID"))
+LOG_GROUP_ID = int(os.getenv("LOG_GROUP_ID"))
 
 app = Client("auto_invite_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 scheduler = AsyncIOScheduler()
 
-async def refresh_invite_link():
-    try:
-        # Revoke all old invite links
-        invite_links = await app.get_chat_invite_links(CHANNEL_ID, revoke=True)
-        for link in invite_links:
-            await app.revoke_chat_invite_link(CHANNEL_ID, link.invite_link)
+# Stylish message template
+def format_invite_message(link):
+    return f"""**[ Channel Invite Updated ]**
 
-        # Create new one
-        new_link = await app.create_chat_invite_link(CHANNEL_ID, creates_join_request=False)
-
-        # Send to owner
-        await app.send_message(
-            OWNER_ID,
-            f"""**[ Channel Invite Updated ]**
-
-🔗 **New Link:** [`{new_link.invite_link}`]({new_link.invite_link})
-⏱️ **Refreshed At:** `{new_link.created_at.strftime("%Y-%m-%d %H:%M:%S")}`
+🔗 **New Link:** [`{link.invite_link}`]({link.invite_link})
+⏱️ **Refreshed At:** `{link.created_at.strftime("%Y-%m-%d %H:%M:%S")}`
 ♻️ **Old link revoked automatically**
 
-~ Powered by **Bidu Bot System**""",
-            disable_web_page_preview=True
-        )
-        print(f"[+] Sent new invite to owner: {new_link.invite_link}")
+~ Powered by **Bidu Bot System**
+"""
 
+# Common function for both auto and command
+async def generate_and_send_invite():
+    try:
+        # Revoke all old links
+        invite_links = await app.get_chat_invite_links(CHANNEL_ID, revoke=True)
+        for l in invite_links:
+            await app.revoke_chat_invite_link(CHANNEL_ID, l.invite_link)
+
+        # Create fresh link
+        new_link = await app.create_chat_invite_link(CHANNEL_ID, creates_join_request=False)
+
+        # Send to owner and log group
+        message = format_invite_message(new_link)
+        await app.send_message(OWNER_ID, message, disable_web_page_preview=True)
+        await app.send_message(LOG_GROUP_ID, message, disable_web_page_preview=True)
+
+        print(f"[+] New invite link sent to owner and group.")
     except Exception as e:
-        print(f"[!] Error while refreshing: {e}")
+        print(f"[!] Error: {e}")
 
+# Scheduled auto task
+async def scheduled_task():
+    await generate_and_send_invite()
+
+# Manual /newlink command
+@app.on_message(filters.private & filters.user(OWNER_ID) & filters.command("newlink"))
+async def manual_link_command(client, message):
+    await generate_and_send_invite()
+    await message.reply("✅ New invite link generated and sent.")
+
+# /start command to start the scheduler
 @app.on_message(filters.private & filters.user(OWNER_ID) & filters.command("start"))
-async def start_bot(client, message):
+async def start_scheduler(client, message):
     if not scheduler.running:
-        scheduler.add_job(refresh_invite_link, "interval", minutes=1)
+        scheduler.add_job(scheduled_task, "interval", minutes=1)
         scheduler.start()
-        await message.reply("✅ Bidu Bot Activated!\nAuto invite link will refresh every 1 minute.")
+        await message.reply("✅ Bidu Bot Activated! Auto link refresh started.")
     else:
         await message.reply("⚙️ Already running bhai.")
 
-async def main():
-    await app.start()
-    print("Bot started!")
-    try:
-        await asyncio.get_event_loop().create_future()  # Run forever
-    except (KeyboardInterrupt, SystemExit):
-        pass
-    finally:
-        await app.stop()
-
-if __name__ == "__main__":
-    asyncio.run(main())
+app.run()
