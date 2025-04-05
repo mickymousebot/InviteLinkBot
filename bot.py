@@ -1,129 +1,107 @@
 import os
 import logging
-from datetime import datetime, timedelta
-from threading import Timer
-from telegram import Bot, Update, ChatInviteLink
-from telegram.ext import Updater, CommandHandler, CallbackContext
+import asyncio
+from datetime import datetime
+import pytz
+from telegram import Bot
+from telegram.error import TelegramError, BadRequest
 
 # Configuration
-BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')  # Set this in Koyeb environment variables
-CHANNEL_ID = os.getenv('CHANNEL_ID')  # Your private channel ID (negative number)
-ADMIN_IDS = [int(id) for id in os.getenv('ADMIN_IDS', '').split(',') if id]  # Comma-separated list of admin user IDs
+TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
+CHANNEL_ID = os.getenv('TELEGRAM_CHANNEL_ID')  # Must include -100 prefix
+ADMIN_ID = os.getenv('TELEGRAM_ADMIN_ID')
+TIMEZONE = pytz.timezone('Asia/Kolkata')
 
-# Global variables
-active_links = {}
-bot = Bot(token=BOT_TOKEN)
+# Initialize bot
+bot = Bot(token=TELEGRAM_BOT_TOKEN)
 
-# Set up logging
+# Configure logging
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-def generate_invite_link(context: CallbackContext) -> ChatInviteLink:
-    """Generate a new primary invite link for the channel."""
+async def check_bot_permissions():
+    """Verify bot has proper admin rights"""
     try:
-        # Create a new invite link that expires in 2 minutes (as a safety margin)
-        invite_link = bot.create_chat_invite_link(
-            chat_id=CHANNEL_ID,
-            name="Temporary Access",
-            expire_date=datetime.now() + timedelta(minutes=2),
-            member_limit=1
+        chat = await bot.get_chat(chat_id=CHANNEL_ID)
+        if not chat.permissions.can_invite_users:
+            raise PermissionError("Bot lacks invite permissions")
+        return True
+    except BadRequest as e:
+        logger.error(f"Channel access error: {e}")
+        raise
+    except Exception as e:
+        logger.error(f"Permission check failed: {e}")
+        raise
+
+async def rotate_link():
+    """Generate and revoke links with enhanced error handling"""
+    try:
+        await check_bot_permissions()
+        
+        # Revoke old link
+        revoked_link = await bot.export_chat_invite_link(chat_id=CHANNEL_ID)
+        logger.info(f"Revoked: {revoked_link}")
+        
+        # Create new link
+        new_link = await bot.export_chat_invite_link(chat_id=CHANNEL_ID)
+        logger.info(f"New link: {new_link}")
+        
+        # Log and notify
+        await bot.send_message(
+            chat_id=ADMIN_ID,
+            text=f"🔄 New Link: {new_link}\n⏰ {datetime.now(TIMEZONE).strftime('%Y-%m-%d %H:%M:%S')}"
         )
+        return True
         
-        logger.info(f"Generated new invite link: {invite_link.invite_link}")
-        return invite_link
+    except BadRequest as e:
+        error_msg = f"⚠️ API Error: {e.message}"
+        logger.error(error_msg)
+    except TelegramError as e:
+        error_msg = f"⚠️ Telegram Error: {str(e)}"
+        logger.error(error_msg)
     except Exception as e:
-        logger.error(f"Error generating invite link: {e}")
-        raise
-
-def revoke_invite_link(invite_link: str):
-    """Revoke an existing invite link."""
-    try:
-        bot.revoke_chat_invite_link(chat_id=CHANNEL_ID, invite_link=invite_link)
-        logger.info(f"Revoked invite link: {invite_link}")
-    except Exception as e:
-        logger.error(f"Error revoking invite link {invite_link}: {e}")
-
-def start_rotation(context: CallbackContext):
-    """Start the invite link rotation process."""
-    try:
-        # Generate new link
-        new_link = generate_invite_link(context)
-        
-        # Store the active link
-        active_links[CHANNEL_ID] = new_link.invite_link
-        
-        # Schedule revocation after 1 minute
-        Timer(60.0, revoke_and_rotate, args=[context]).start()
-        
-        return new_link.invite_link
-    except Exception as e:
-        logger.error(f"Error in start_rotation: {e}")
-        raise
-
-def revoke_and_rotate(context: CallbackContext):
-    """Revoke the current link and start a new rotation."""
-    try:
-        # Revoke current link if it exists
-        current_link = active_links.get(CHANNEL_ID)
-        if current_link:
-            revoke_invite_link(current_link)
-            del active_links[CHANNEL_ID]
-        
-        # Start new rotation
-        start_rotation(context)
-    except Exception as e:
-        logger.error(f"Error in revoke_and_rotate: {e}")
-
-def start(update: Update, context: CallbackContext):
-    """Handler for the /start command."""
-    user_id = update.effective_user.id
+        error_msg = f"⚠️ Unexpected Error: {str(e)}"
+        logger.error(error_msg)
     
-    if user_id not in ADMIN_IDS:
-        update.message.reply_text("You are not authorized to use this bot.")
+    await bot.send_message(
+        chat_id=ADMIN_ID,
+        text=error_msg
+    )
+    return False
+
+async def main():
+    # Startup notification
+    await bot.send_message(
+        chat_id=ADMIN_ID,
+        text="🤖 Bot Starting...\n"
+             "🔍 Checking permissions..."
+    )
+    
+    # Permission verification
+    try:
+        await check_bot_permissions()
+        await bot.send_message(
+            chat_id=ADMIN_ID,
+            text="✅ Bot has correct permissions!\n"
+                 "⏳ Starting link rotation..."
+        )
+    except Exception as e:
+        await bot.send_message(
+            chat_id=ADMIN_ID,
+            text=f"❌ FATAL: {str(e)}\n"
+                 "Please make bot admin with invite permissions!"
+        )
         return
     
-    try:
-        if CHANNEL_ID in active_links:
-            # Send existing active link
-            update.message.reply_text(
-                f"Current active invite link:\n{active_links[CHANNEL_ID]}\n"
-                "This link will expire in 1 minute and be replaced automatically."
-            )
-        else:
-            # Start new rotation
-            new_link = start_rotation(context)
-            update.message.reply_text(
-                f"New invite link generated:\n{new_link}\n"
-                "This link will expire in 1 minute and be replaced automatically."
-            )
-    except Exception as e:
-        update.message.reply_text("Failed to generate invite link. Please try again.")
-        logger.error(f"Error in /start command: {e}")
-
-def main():
-    """Start the bot."""
-    updater = Updater(token=BOT_TOKEN, use_context=True)
-    dp = updater.dispatcher
-    
-    # Add handlers
-    dp.add_handler(CommandHandler("start", start))
-    
-    # Start the Bot
-    updater.start_polling()
-    logger.info("Bot started and polling...")
-    
-    # Start the initial rotation if no active link exists
-    if not active_links.get(CHANNEL_ID):
-        try:
-            start_rotation(dp)
-        except Exception as e:
-            logger.error(f"Failed to start initial rotation: {e}")
-    
-    # Run the bot until you press Ctrl-C
-    updater.idle()
+    # Main rotation loop
+    while True:
+        success = await rotate_link()
+        delay = 30 if not success else 60  # Shorter delay on errors
+        await asyncio.sleep(delay)
 
 if __name__ == '__main__':
-    main()
+    logger.info("Starting Enhanced Link Rotator")
+    asyncio.run(main())
