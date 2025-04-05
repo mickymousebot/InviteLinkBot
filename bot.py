@@ -1,107 +1,54 @@
 import os
-import logging
 import asyncio
-from datetime import datetime
-import pytz
-from telegram import Bot
-from telegram.error import TelegramError, BadRequest
+from pyrogram import Client, filters
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-# Configuration
-TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
-CHANNEL_ID = os.getenv('TELEGRAM_CHANNEL_ID')  # Must include -100 prefix
-ADMIN_ID = os.getenv('TELEGRAM_ADMIN_ID')
-TIMEZONE = pytz.timezone('Asia/Kolkata')
+API_ID = int(os.getenv("API_ID"))
+API_HASH = os.getenv("API_HASH")
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+CHANNEL_ID = int(os.getenv("CHANNEL_ID"))  # Example: -100xxxxxxxxxx
+OWNER_ID = int(os.getenv("OWNER_ID"))      # Your Telegram User ID (int)
 
-# Initialize bot
-bot = Bot(token=TELEGRAM_BOT_TOKEN)
+app = Client("auto_invite_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+scheduler = AsyncIOScheduler()
 
-# Configure logging
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
-logger = logging.getLogger(__name__)
-
-async def check_bot_permissions():
-    """Verify bot has proper admin rights"""
+# Function to auto-create and revoke links
+async def refresh_invite_link():
     try:
-        chat = await bot.get_chat(chat_id=CHANNEL_ID)
-        if not chat.permissions.can_invite_users:
-            raise PermissionError("Bot lacks invite permissions")
-        return True
-    except BadRequest as e:
-        logger.error(f"Channel access error: {e}")
-        raise
-    except Exception as e:
-        logger.error(f"Permission check failed: {e}")
-        raise
+        async with app:
+            # Revoke all old invite links
+            invite_links = await app.get_chat_invite_links(CHANNEL_ID, revoke=True)
+            for link in invite_links:
+                await app.revoke_chat_invite_link(CHANNEL_ID, link.invite_link)
 
-async def rotate_link():
-    """Generate and revoke links with enhanced error handling"""
-    try:
-        await check_bot_permissions()
-        
-        # Revoke old link
-        revoked_link = await bot.export_chat_invite_link(chat_id=CHANNEL_ID)
-        logger.info(f"Revoked: {revoked_link}")
-        
-        # Create new link
-        new_link = await bot.export_chat_invite_link(chat_id=CHANNEL_ID)
-        logger.info(f"New link: {new_link}")
-        
-        # Log and notify
-        await bot.send_message(
-            chat_id=ADMIN_ID,
-            text=f"🔄 New Link: {new_link}\n⏰ {datetime.now(TIMEZONE).strftime('%Y-%m-%d %H:%M:%S')}"
-        )
-        return True
-        
-    except BadRequest as e:
-        error_msg = f"⚠️ API Error: {e.message}"
-        logger.error(error_msg)
-    except TelegramError as e:
-        error_msg = f"⚠️ Telegram Error: {str(e)}"
-        logger.error(error_msg)
-    except Exception as e:
-        error_msg = f"⚠️ Unexpected Error: {str(e)}"
-        logger.error(error_msg)
-    
-    await bot.send_message(
-        chat_id=ADMIN_ID,
-        text=error_msg
-    )
-    return False
+            # Create new one
+            new_link = await app.create_chat_invite_link(CHANNEL_ID, creates_join_request=False)
 
-async def main():
-    # Startup notification
-    await bot.send_message(
-        chat_id=ADMIN_ID,
-        text="🤖 Bot Starting...\n"
-             "🔍 Checking permissions..."
-    )
-    
-    # Permission verification
-    try:
-        await check_bot_permissions()
-        await bot.send_message(
-            chat_id=ADMIN_ID,
-            text="✅ Bot has correct permissions!\n"
-                 "⏳ Starting link rotation..."
-        )
-    except Exception as e:
-        await bot.send_message(
-            chat_id=ADMIN_ID,
-            text=f"❌ FATAL: {str(e)}\n"
-                 "Please make bot admin with invite permissions!"
-        )
-        return
-    
-    # Main rotation loop
-    while True:
-        success = await rotate_link()
-        delay = 30 if not success else 60  # Shorter delay on errors
-        await asyncio.sleep(delay)
+            # Send to owner
+            await app.send_message(
+                OWNER_ID,
+                f"""**[ Channel Invite Updated ]**
 
-if __name__ == '__main__':
-    logger.info("Starting Enhanced Link Rotator")
-    asyncio.run(main())
+🔗 **New Link:** [`{new_link.invite_link}`]({new_link.invite_link})
+⏱️ **Refreshed At:** `{new_link.created_at.strftime("%Y-%m-%d %H:%M:%S")}`
+♻️ **Old link revoked automatically**
+
+~ Powered by **Bidu Bot System**""",
+                disable_web_page_preview=True
+            )
+            print(f"[+] Sent new invite to owner: {new_link.invite_link}")
+
+    except Exception as e:
+        print(f"[!] Error while refreshing: {e}")
+
+# Manual command to start the schedule (optional)
+@app.on_message(filters.private & filters.user(OWNER_ID) & filters.command("start"))
+async def start_bot(client, message):
+    if not scheduler.running:
+        scheduler.add_job(refresh_invite_link, "interval", minutes=1)
+        scheduler.start()
+        await message.reply("✅ Bidu Bot Activated!\nAuto invite link will refresh every 1 minute.")
+    else:
+        await message.reply("⚙️ Already running bhai.")
+
+app.run()
