@@ -4,18 +4,16 @@ from pyrogram import Client, filters
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 API_ID = int(os.getenv("API_ID"))
-API_HASH = os.getenv("API_HASH"))
-BOT_TOKEN = os.getenv("BOT_TOKEN"))
+API_HASH = os.getenv("API_HASH")
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHANNEL_ID = int(os.getenv("CHANNEL_ID"))  # Example: -100xxxxxxxxxx
 OWNER_ID = int(os.getenv("OWNER_ID"))      # Your Telegram User ID (int)
 
 app = Client("auto_invite_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 scheduler = AsyncIOScheduler()
 
-# Function to auto-create and revoke links
 async def refresh_invite_link():
     try:
-        # Don't use async with app here since client is already connected
         # Revoke all old invite links
         invite_links = await app.get_chat_invite_links(CHANNEL_ID, revoke=True)
         for link in invite_links:
@@ -41,7 +39,6 @@ async def refresh_invite_link():
     except Exception as e:
         print(f"[!] Error while refreshing: {e}")
 
-# Manual command to start the schedule (optional)
 @app.on_message(filters.private & filters.user(OWNER_ID) & filters.command("start"))
 async def start_bot(client, message):
     if not scheduler.running:
@@ -51,14 +48,15 @@ async def start_bot(client, message):
     else:
         await message.reply("⚙️ Already running bhai.")
 
-# Start the bot
-app.start()
-print("Bot started!")
+async def main():
+    await app.start()
+    print("Bot started!")
+    try:
+        await asyncio.get_event_loop().create_future()  # Run forever
+    except (KeyboardInterrupt, SystemExit):
+        pass
+    finally:
+        await app.stop()
 
-# Keep the bot running
-try:
-    asyncio.get_event_loop().run_forever()
-except KeyboardInterrupt:
-    print("Bot stopped!")
-finally:
-    app.stop()
+if __name__ == "__main__":
+    asyncio.run(main())
