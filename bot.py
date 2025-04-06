@@ -1,77 +1,165 @@
 import os
 import json
 import logging
+from datetime import datetime
+from typing import Dict, List
+from threading import Event
 from dotenv import load_dotenv
-from telegram.ext import ApplicationBuilder
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from telegram import Bot, Chat, ChatInviteLink
+from telegram.ext import Updater
 
+# Load environment variables
 load_dotenv()
-logging.basicConfig(level=logging.INFO)
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_ID = int(os.getenv("ADMIN_ID"))
+# Configuration
+BOT_TOKEN = os.getenv('BOT_TOKEN')
+ADMIN_ID = int(os.getenv('ADMIN_ID'))
+CONFIG_FILE = 'channels.json'
+ROTATION_INTERVAL = 60  # 10 minutes in seconds
 
-# Load channels from JSON file
-with open("channels.json", "r") as f:
-    CHANNEL_LIST = json.load(f)
+# Logging setup
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
 
-# Store last invite links to revoke later
-last_links = {}
+class LinkRotatorBot:
+    def __init__(self):
+        self.bot = Bot(token=BOT_TOKEN)
+        self.updater = Updater(token=BOT_TOKEN, use_context=True)
+        self.job_queue = self.updater.job_queue
+        self.channels = self._load_channels()
+        self.active_links: Dict[str, ChatInviteLink] = {}
 
-async def generate_and_send_links(application):
-    bot = application.bot
-    global last_links
-
-    for channel in CHANNEL_LIST:
+    def _load_channels(self) -> List[Dict]:
+        """Load channel configurations from JSON file"""
         try:
-            # Revoke old link
-            if channel in last_links:
-                try:
-                    await bot.revoke_chat_invite_link(chat_id=channel, invite_link=last_links[channel])
-                    logging.info(f"Revoked old link for {channel}")
-                except Exception as e:
-                    logging.warning(f"Failed to revoke old link for {channel}: {e}")
+            with open(CONFIG_FILE, 'r') as f:
+                channels = json.load(f)
+                if not isinstance(channels, list):
+                    raise ValueError("Config file should contain a list of channels")
+                return channels
+        except FileNotFoundError:
+            logger.error(f"Config file {CONFIG_FILE} not found")
+            raise
+        except json.JSONDecodeError:
+            logger.error(f"Invalid JSON in config file {CONFIG_FILE}")
+            raise
+        except Exception as e:
+            logger.error(f"Error loading channels: {e}")
+            raise
 
-            # Create new invite link
-            invite = await bot.create_chat_invite_link(chat_id=channel, creates_join_request=False)
-            last_links[channel] = invite.invite_link
+    async def _revoke_link(self, chat_id: str) -> bool:
+        """Revoke the current invite link for a channel"""
+        try:
+            if chat_id in self.active_links:
+                link = self.active_links[chat_id]
+                await self.bot.revoke_chat_invite_link(chat_id, link.invite_link)
+                logger.info(f"Revoked link for channel {chat_id}")
+                return True
+        except Exception as e:
+            logger.error(f"Error revoking link for {chat_id}: {e}")
+        return False
 
-            # Send formatted message to admin
-            await bot.send_message(
+    async def _generate_new_link(self, channel: Dict) -> ChatInviteLink:
+        """Generate a new invite link for a channel"""
+        try:
+            chat_id = channel['id']
+            name = channel.get('name', chat_id)
+            
+            # Optional parameters from config
+            expire_date = channel.get('expire_date')
+            member_limit = channel.get('member_limit')
+            
+            link = await self.bot.create_chat_invite_link(
+                chat_id=chat_id,
+                name=f"AutoRotated_{datetime.now().strftime('%Y%m%d%H%M')}",
+                expire_date=expire_date,
+                member_limit=member_limit,
+                creates_join_request=channel.get('join_request', False)
+            )
+            
+            self.active_links[chat_id] = link
+            logger.info(f"Generated new link for channel {name} ({chat_id})")
+            return link
+        except Exception as e:
+            logger.error(f"Error generating link for {channel.get('name', chat_id)}: {e}")
+            raise
+
+    async def _notify_admin(self, channel: Dict, old_link: str, new_link: str):
+        """Send notification to admin about link rotation"""
+        try:
+            message = (
+                f"🔒 *Link Rotation Completed*\n\n"
+                f"*Channel:* {channel.get('name', channel['id'])}\n"
+                f"*Channel ID:* `{channel['id']}`\n"
+                f"*Old Link:* {'Revoked' if old_link else 'None'}\n"
+                f"*New Link:* [Click Here]({new_link})\n"
+                f"*Time:* {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+            )
+            
+            await self.bot.send_message(
                 chat_id=ADMIN_ID,
-                text=f"""✅ *New Private Invite Link Generated!*
-
-*📢 Channel:* `{channel}`
-*🔗 Invite Link:* [Click to Join]({invite.invite_link})
-
-⏱️ *Link Validity:* Rotates every *10 minutes*
-♻️ *Old link has been revoked successfully*
-
-🔐 _Secure | Automated | Reliable_
-
-— *InviteLinkBot™*
-""",
-                parse_mode="Markdown",
+                text=message,
+                parse_mode='Markdown',
                 disable_web_page_preview=True
             )
-
         except Exception as e:
-            logging.error(f"Error processing {channel}: {e}")
-            await bot.send_message(chat_id=ADMIN_ID, text=f"❌ Error with {channel}:\n`{e}`", parse_mode="Markdown")
+            logger.error(f"Error notifying admin: {e}")
 
-async def main():
-    application = ApplicationBuilder().token(BOT_TOKEN).build()
+    async def rotate_links(self, context):
+        """Main function to rotate links for all channels"""
+        logger.info("Starting link rotation cycle")
+        
+        for channel in self.channels:
+            chat_id = channel['id']
+            channel_name = channel.get('name', chat_id)
+            
+            try:
+                # Revoke old link
+                old_link = self.active_links.get(chat_id)
+                await self._revoke_link(chat_id)
+                
+                # Generate new link
+                new_link = await self._generate_new_link(channel)
+                
+                # Notify admin
+                await self._notify_admin(
+                    channel,
+                    old_link.invite_link if old_link else None,
+                    new_link.invite_link
+                )
+                
+            except Exception as e:
+                logger.error(f"Failed to rotate link for {channel_name}: {e}")
+                try:
+                    await self.bot.send_message(
+                        chat_id=ADMIN_ID,
+                        text=f"❌ *Error rotating link for {channel_name}*\n\nError: {e}",
+                        parse_mode='Markdown'
+                    )
+                except Exception as notify_error:
+                    logger.error(f"Failed to send error notification: {notify_error}")
 
-    scheduler = AsyncIOScheduler()
-    scheduler.add_job(generate_and_send_links, "interval", minutes=10, args=[application])
-    scheduler.start()
+    def start(self):
+        """Start the bot and schedule jobs"""
+        logger.info("Starting Link Rotator Bot")
+        
+        # Start the job queue
+        self.job_queue.run_repeating(
+            callback=self.rotate_links,
+            interval=ROTATION_INTERVAL,
+            first=10  # Start after 10 seconds to allow bot initialization
+        )
+        
+        # Start the bot
+        self.updater.start_polling()
+        self.updater.idle()
 
-    logging.info("🚀 Bot is running and scheduler started...")
-    await application.initialize()
-    await application.start()
-    await application.updater.start_polling()
-    await application.updater.idle()
-
-if __name__ == "__main__":
-    import asyncio
-    asyncio.run(main())
+if __name__ == '__main__':
+    try:
+        bot = LinkRotatorBot()
+        bot.start()
+    except Exception as e:
+        logger.critical(f"Bot failed to start: {e}")
