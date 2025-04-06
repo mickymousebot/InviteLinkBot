@@ -30,13 +30,15 @@ async def generate_links(app):
 
     for channel in CHANNELS:
         try:
-            # Revoke old invite link
-            if channel in last_links:
-                try:
-                    await bot.revoke_chat_invite_link(chat_id=channel, invite_link=last_links[channel])
-                    logging.info(f"Revoked old link for {channel}")
-                except Exception as e:
-                    logging.warning(f"Could not revoke old link for {channel}: {e}")
+            # Revoke all active invite links
+            try:
+                active_links = await bot.get_chat_invite_links(chat_id=channel, creates_join_request=False, limit=10)
+                for link in active_links:
+                    if not link.is_revoked:
+                        await bot.revoke_chat_invite_link(chat_id=channel, invite_link=link.invite_link)
+                        logging.info(f"Revoked existing link for {channel}: {link.invite_link}")
+            except Exception as e:
+                logging.warning(f"Could not fetch/revoke old links for {channel}: {e}")
 
             # Create new invite link
             invite = await bot.create_chat_invite_link(chat_id=channel, creates_join_request=False)
@@ -51,7 +53,7 @@ async def generate_links(app):
 *🔗 Link:* [Join Now]({invite.invite_link})
 
 ⏱️ Auto-refresh every *10 minutes*
-♻️ Old link revoked successfully
+♻️ All previous links revoked
 
 🔒 _Secure & Automated by InviteLinkBot™_""",
                 parse_mode="Markdown",
@@ -78,14 +80,12 @@ async def main():
     # Send startup message to admin
     await app.bot.send_message(
         chat_id=ADMIN_ID,
-        text="""
-✅ *InviteLinkBot™ is now active!*
+        text="""✅ *InviteLinkBot™ is now active!*
 
 🔁 Invite links will be refreshed every *10 minutes*
 📩 You will get updated links here automatically.
 
-🔒 Sit back and relax!
-""",
+🔒 Sit back and relax!""",
         parse_mode="Markdown"
     )
 
