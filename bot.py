@@ -30,36 +30,42 @@ async def generate_links(app):
 
     for channel in CHANNELS:
         try:
-            # Revoke old invite link
+            # Revoke existing invite links
             if channel in last_links:
                 try:
                     await bot.revoke_chat_invite_link(chat_id=channel, invite_link=last_links[channel])
-                    logging.info(f"Revoked old link for {channel}")
+                    logging.info(f"✅ Revoked old invite link for {channel}")
                 except Exception as e:
-                    logging.warning(f"Could not revoke old link for {channel}: {e}")
+                    logging.warning(f"⚠️ Couldn't revoke link for {channel}: {e}")
 
-            # Create new invite link
-            invite = await bot.create_chat_invite_link(chat_id=channel, creates_join_request=False)
+            # Now create a fresh link after revocation
+            invite = await bot.create_chat_invite_link(
+                chat_id=channel,
+                creates_join_request=False,
+                name="AutoLinkBot",
+                expire_date=None,
+                member_limit=0
+            )
             last_links[channel] = invite.invite_link
 
-            # Send stylish message to admin
+            # Send message to admin
             await bot.send_message(
                 chat_id=ADMIN_ID,
-                text=f"""✅ *New Invite Link Generated!*
+                text=f"""✅ *Fresh Invite Link Generated!*
 
 *📢 Channel:* `{channel}`
 *🔗 Link:* [Join Now]({invite.invite_link})
 
-⏱️ Auto-refresh every *10 minutes*
-♻️ Old link revoked successfully
+♻️ *Old link revoked instantly*
+🔁 *Auto-refresh every 10 minutes*
 
-🔒 _Secure & Automated by InviteLinkBot™_""",
+🔒 _Managed by InviteLinkBot™_""",
                 parse_mode="Markdown",
                 disable_web_page_preview=True
             )
 
         except Exception as e:
-            logging.error(f"Error with {channel}: {e}")
+            logging.error(f"❌ Error with {channel}: {e}")
             await bot.send_message(
                 chat_id=ADMIN_ID,
                 text=f"❌ Error with `{channel}`:\n`{e}`",
@@ -72,14 +78,13 @@ async def main():
 
     # Start the scheduler
     scheduler = AsyncIOScheduler()
-    scheduler.add_job(generate_links, "interval", minutes=1, args=[app])
+    scheduler.add_job(generate_links, "interval", minutes=10, args=[app])
     scheduler.start()
 
     # Send startup message to admin
     await app.bot.send_message(
         chat_id=ADMIN_ID,
-        text="""
-✅ *InviteLinkBot™ is now active!*
+        text="""✅ *InviteLinkBot™ is now active!*
 
 🔁 Invite links will be refreshed every *10 minutes*
 📩 You will get updated links here automatically.
