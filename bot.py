@@ -8,7 +8,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 # Load .env variables
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_IDS = list(map(int, os.getenv("ADMIN_IDS", "").split(",")))
+ADMIN_ID = int(os.getenv("ADMIN_ID"))
 
 # Enable logging
 logging.basicConfig(
@@ -20,57 +20,53 @@ logging.basicConfig(
 with open("channels.json", "r") as file:
     CHANNELS = json.load(file)
 
-# Store last invite links
-last_links = {}
-
-# Function to create and send new invite links
+# Function to revoke all invite links and create a new one
 async def generate_links(app):
     bot = app.bot
-    global last_links
 
     for channel in CHANNELS:
         try:
-            # Revoke existing invite links
-            if channel in last_links:
-                try:
-                    await bot.revoke_chat_invite_link(chat_id=channel, invite_link=last_links[channel])
-                    logging.info(f"✅ Revoked old invite link for {channel}")
-                except Exception as e:
-                    logging.warning(f"⚠️ Couldn't revoke link for {channel}: {e}")
+            # 🔥 1. Revoke ALL active invite links
+            try:
+                invite_links = await bot.get_chat_invite_links(chat_id=channel, creates_join_request=False)
+                for inv in invite_links:
+                    await bot.revoke_chat_invite_link(chat_id=channel, invite_link=inv.invite_link)
+                logging.info(f"✅ Revoked all old links for {channel}")
+            except Exception as e:
+                logging.warning(f"⚠️ Couldn't revoke all links for {channel}: {e}")
 
-            # Now create a fresh link after revocation
+            # ✅ 2. Create fresh link
             invite = await bot.create_chat_invite_link(
                 chat_id=channel,
                 creates_join_request=False,
-                name="AutoLinkBot",
-                expire_date=None,
-                member_limit=0
+                name="AutoLinkBot"
             )
-            last_links[channel] = invite.invite_link
 
-            # Send message to admin
-            await bot.send_message(
-                chat_id=ADMIN_ID,
-                text=f"""✅ *Fresh Invite Link Generated!*
+            # ✅ 3. Send new link to all admins
+            for admin_id in ADMIN_IDS:
+                await bot.send_message(
+                    chat_id=admin_id,
+                    text=f"""✅ *Fresh Invite Link Generated!*
 
 *📢 Channel:* `{channel}`
 *🔗 Link:* [Join Now]({invite.invite_link})
 
-♻️ *Old link revoked instantly*
+🔥 *All previous links revoked*
 🔁 *Auto-refresh every 10 minutes*
 
-🔒 _Managed by InviteLinkBot™_""",
-                parse_mode="Markdown",
-                disable_web_page_preview=True
-            )
+🔒 _Powered by InviteLinkBot™_""",
+                    parse_mode="Markdown",
+                    disable_web_page_preview=True
+                )
 
         except Exception as e:
             logging.error(f"❌ Error with {channel}: {e}")
-            await bot.send_message(
-                chat_id=ADMIN_ID,
-                text=f"❌ Error with `{channel}`:\n`{e}`",
-                parse_mode="Markdown"
-            )
+            for admin_id in ADMIN_IDS:
+                await bot.send_message(
+                    chat_id=admin_id,
+                    text=f"❌ Error with `{channel}`:\n`{e}`",
+                    parse_mode="Markdown"
+                )
 
 # Main function to run bot
 async def main():
@@ -81,18 +77,19 @@ async def main():
     scheduler.add_job(generate_links, "interval", minutes=10, args=[app])
     scheduler.start()
 
-    # Send startup message to admin
-    await app.bot.send_message(
-        chat_id=ADMIN_ID,
-        text="""✅ *InviteLinkBot™ is now active!*
+    # Send startup message to all admins
+    for admin_id in ADMIN_IDS:
+        await app.bot.send_message(
+            chat_id=admin_id,
+            text="""✅ *InviteLinkBot™ is now active!*
 
 🔁 Invite links will be refreshed every *10 minutes*
 📩 You will get updated links here automatically.
 
 🔒 Sit back and relax!
 """,
-        parse_mode="Markdown"
-    )
+            parse_mode="Markdown"
+        )
 
     logging.info("🚀 Bot is running and scheduler started...")
     await app.initialize()
