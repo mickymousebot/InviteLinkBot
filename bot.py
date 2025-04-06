@@ -1,67 +1,77 @@
 import os
-import asyncio
-from pyrogram import Client, filters
+import json
+import logging
+from dotenv import load_dotenv
+from telegram.ext import ApplicationBuilder
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-API_ID = int(os.getenv("API_ID"))
-API_HASH = os.getenv("API_HASH")
+load_dotenv()
+logging.basicConfig(level=logging.INFO)
+
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-CHANNEL_ID = int(os.getenv("CHANNEL_ID"))
-OWNER_ID = int(os.getenv("OWNER_ID"))
-LOG_GROUP_ID = int(os.getenv("LOG_GROUP_ID"))
+ADMIN_ID = int(os.getenv("ADMIN_ID"))
 
-app = Client("auto_invite_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
-scheduler = AsyncIOScheduler()
+# Load channels from JSON file
+with open("channels.json", "r") as f:
+    CHANNEL_LIST = json.load(f)
 
-# Stylish message template
-def format_invite_message(link):
-    return f"""**[ Channel Invite Updated ]**
+# Store last invite links to revoke later
+last_links = {}
 
-🔗 **New Link:** [`{link.invite_link}`]({link.invite_link})
-⏱️ **Refreshed At:** `{link.created_at.strftime("%Y-%m-%d %H:%M:%S")}`
-♻️ **Old link revoked automatically**
+async def generate_and_send_links(application):
+    bot = application.bot
+    global last_links
 
-~ Powered by **Bidu Bot System**
-"""
+    for channel in CHANNEL_LIST:
+        try:
+            # Revoke old link
+            if channel in last_links:
+                try:
+                    await bot.revoke_chat_invite_link(chat_id=channel, invite_link=last_links[channel])
+                    logging.info(f"Revoked old link for {channel}")
+                except Exception as e:
+                    logging.warning(f"Failed to revoke old link for {channel}: {e}")
 
-# Common function for both auto and command
-async def generate_and_send_invite():
-    try:
-        # Revoke all old links
-        invite_links = await app.get_chat_invite_links(CHANNEL_ID, revoke=True)
-        for l in invite_links:
-            await app.revoke_chat_invite_link(CHANNEL_ID, l.invite_link)
+            # Create new invite link
+            invite = await bot.create_chat_invite_link(chat_id=channel, creates_join_request=False)
+            last_links[channel] = invite.invite_link
 
-        # Create fresh link
-        new_link = await app.create_chat_invite_link(CHANNEL_ID, creates_join_request=False)
+            # Send formatted message to admin
+            await bot.send_message(
+                chat_id=ADMIN_ID,
+                text=f"""✅ *New Private Invite Link Generated!*
 
-        # Send to owner and log group
-        message = format_invite_message(new_link)
-        await app.send_message(OWNER_ID, message, disable_web_page_preview=True)
-        await app.send_message(LOG_GROUP_ID, message, disable_web_page_preview=True)
+*📢 Channel:* `{channel}`
+*🔗 Invite Link:* [Click to Join]({invite.invite_link})
 
-        print(f"[+] New invite link sent to owner and group.")
-    except Exception as e:
-        print(f"[!] Error: {e}")
+⏱️ *Link Validity:* Rotates every *10 minutes*
+♻️ *Old link has been revoked successfully*
 
-# Scheduled auto task
-async def scheduled_task():
-    await generate_and_send_invite()
+🔐 _Secure | Automated | Reliable_
 
-# Manual /newlink command
-@app.on_message(filters.private & filters.user(OWNER_ID) & filters.command("newlink"))
-async def manual_link_command(client, message):
-    await generate_and_send_invite()
-    await message.reply("✅ New invite link generated and sent.")
+— *InviteLinkBot™*
+""",
+                parse_mode="Markdown",
+                disable_web_page_preview=True
+            )
 
-# /start command to start the scheduler
-@app.on_message(filters.private & filters.user(OWNER_ID) & filters.command("start"))
-async def start_scheduler(client, message):
-    if not scheduler.running:
-        scheduler.add_job(scheduled_task, "interval", minutes=1)
-        scheduler.start()
-        await message.reply("✅ Bidu Bot Activated! Auto link refresh started.")
-    else:
-        await message.reply("⚙️ Already running bhai.")
+        except Exception as e:
+            logging.error(f"Error processing {channel}: {e}")
+            await bot.send_message(chat_id=ADMIN_ID, text=f"❌ Error with {channel}:\n`{e}`", parse_mode="Markdown")
 
-app.run()
+async def main():
+    application = ApplicationBuilder().token(BOT_TOKEN).build()
+
+    scheduler = AsyncIOScheduler()
+    scheduler.add_job(generate_and_send_links, "interval", minutes=10, args=[application])
+    scheduler.start()
+
+    logging.info("🚀 Bot is running and scheduler started...")
+    await application.initialize()
+    await application.start()
+    await application.updater.start_polling()
+    await application.updater.idle()
+
+if __name__ == "__main__":
+    import asyncio
+    asyncio.run(main())
