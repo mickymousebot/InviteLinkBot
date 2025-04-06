@@ -1,16 +1,4 @@
 [
-    {
-        "id": "-1002468318697",
-        "name": "Premium Channel 1",
-        "expire_date": null,
-        "member_limit": 100,
-        "join_request": false
-    },
-    {
-        "id": "-1002286216217",
-        "name": "VIP Access",
-        "expire_date": "2023-12-31T23:59:59",
-        "member_limit": null,
-        "join_request": true
-    }
+  "-1002468318697",
+  "-1002286216217"
 ]
