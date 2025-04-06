@@ -92,7 +92,7 @@ async def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     scheduler = AsyncIOScheduler()
-    scheduler.add_job(generate_links, "interval", minutes=10, args=[app])
+    scheduler.add_job(generate_links, "interval", minutes=1, args=[app])
     scheduler.start()
 
     await app.bot.send_message(
