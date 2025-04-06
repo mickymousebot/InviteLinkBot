@@ -55,7 +55,7 @@ async def generate_links(app):
             title = chat_info.title or "Unnamed"
 
             # Add to update text with HTML formatting — emoji after name
-            updated_text += f'<a href="{invite.invite_link}">"{title}"</a> {emoji}\n'
+            updated_text += f'▸ <a href="{invite.invite_link}"><i>{title}</i></a> {emoji}\n'
 
             # Notify admin
             await bot.send_message(
