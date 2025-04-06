@@ -54,8 +54,8 @@ async def generate_links(app):
             chat_info = await bot.get_chat(channel)
             title = chat_info.title or "Unnamed"
 
-            # Add to update text with HTML formatting
-            updated_text += f'{emoji} <a href="{invite.invite_link}">"{title}"</a>\n'
+            # Add to update text with HTML formatting — emoji after name
+            updated_text += f'<a href="{invite.invite_link}">"{title}"</a> {emoji}\n'
 
             # Notify admin
             await bot.send_message(
@@ -105,7 +105,7 @@ async def main():
 
     # Start scheduler
     scheduler = AsyncIOScheduler()
-    scheduler.add_job(generate_links, "interval", minutes=1, args=[app])  # Set to 10 minutes
+    scheduler.add_job(generate_links, "interval", minutes=10, args=[app])  # 10 minutes interval
     scheduler.start()
 
     await app.bot.send_message(
