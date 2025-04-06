@@ -39,12 +39,16 @@ A powerful Telegram bot that auto-generates new invite links, revokes old ones, 
 Inside `main.py`, change these variables:
 
 ```python
-BOT_TOKEN = "YOUR_BOT_TOKEN_HERE"
-ADMIN_ID = 123456789  # Your Telegram user ID
-TARGET_CHANNEL_ID = -1001234567890  # Channel ID where message is pinned
-MESSAGE_ID = 42  # ID of the pinned message to update
+✅ How to set environment variables in Koyeb
+While deploying:
 
-CHANNELS = [
-    "-100xxxxxxxxxx",  # Add all your channel/group IDs here
-    "-100yyyyyyyyyy"
-]
+BOT_TOKEN: Your bot token from @BotFather
+
+ADMIN_ID: Your own Telegram user ID (numeric)
+
+TARGET_CHANNEL_ID: The channel ID where pinned message lives (e.g. -100xxxxxxxxxx)
+
+MESSAGE_ID: The message ID that should be edited
+
+CHANNELS: A space-separated list of all your channel/group IDs (example: -1001234567890 -1002345678901 -1003456789012)
+```
