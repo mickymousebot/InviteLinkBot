@@ -9,6 +9,8 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
+TARGET_CHANNEL_ID = int(os.getenv("TARGET_CHANNEL_ID"))  # Example: -1001234567890
+MESSAGE_ID = int(os.getenv("MESSAGE_ID"))  # Message ID to edit
 
 # Enable logging
 logging.basicConfig(
@@ -28,21 +30,27 @@ async def generate_links(app):
     bot = app.bot
     global last_links
 
+    updated_text = "Our Official Channels/Group 👻\n"
+
     for channel in CHANNELS:
         try:
-            # Revoke all active invite links
-            try:
-                active_links = await bot.get_chat_invite_links(chat_id=channel, creates_join_request=False, limit=10)
-                for link in active_links:
-                    if not link.is_revoked:
-                        await bot.revoke_chat_invite_link(chat_id=channel, invite_link=link.invite_link)
-                        logging.info(f"Revoked existing link for {channel}: {link.invite_link}")
-            except Exception as e:
-                logging.warning(f"Could not fetch/revoke old links for {channel}: {e}")
+            # Revoke old invite link
+            if channel in last_links:
+                try:
+                    await bot.revoke_chat_invite_link(chat_id=channel, invite_link=last_links[channel])
+                    logging.info(f"Revoked old link for {channel}")
+                except Exception as e:
+                    logging.warning(f"Could not revoke old link for {channel}: {e}")
 
             # Create new invite link
             invite = await bot.create_chat_invite_link(chat_id=channel, creates_join_request=False)
             last_links[channel] = invite.invite_link
+
+            # Add to message update
+            chat_info = await bot.get_chat(channel)
+            title = chat_info.title or "Unnamed"
+            emoji = "👿"  # Default emoji
+            updated_text += f"{title} ({invite.invite_link}) {emoji}\n"
 
             # Send stylish message to admin
             await bot.send_message(
@@ -53,7 +61,7 @@ async def generate_links(app):
 *🔗 Link:* [Join Now]({invite.invite_link})
 
 ⏱️ Auto-refresh every *10 minutes*
-♻️ All previous links revoked
+♻️ Old link revoked successfully
 
 🔒 _Secure & Automated by InviteLinkBot™_""",
                 parse_mode="Markdown",
@@ -68,24 +76,41 @@ async def generate_links(app):
                 parse_mode="Markdown"
             )
 
-# Main function to run bot
+    # Update the pinned post in your channel
+    try:
+        await bot.edit_message_text(
+            chat_id=TARGET_CHANNEL_ID,
+            message_id=MESSAGE_ID,
+            text=updated_text
+        )
+        logging.info("✅ Channel message updated with new invite links.")
+    except Exception as e:
+        logging.error(f"❌ Failed to update channel message: {e}")
+        await bot.send_message(
+            chat_id=ADMIN_ID,
+            text=f"❌ Could not update message:\n`{e}`",
+            parse_mode="Markdown"
+        )
+
+# Main function
 async def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-    # Start the scheduler
+    # Start scheduler
     scheduler = AsyncIOScheduler()
-    scheduler.add_job(generate_links, "interval", minutes=1, args=[app])
+    scheduler.add_job(generate_links, "interval", minutes=10, args=[app])
     scheduler.start()
 
-    # Send startup message to admin
     await app.bot.send_message(
         chat_id=ADMIN_ID,
-        text="""✅ *InviteLinkBot™ is now active!*
+        text="""
+✅ *InviteLinkBot™ is now active!*
 
 🔁 Invite links will be refreshed every *10 minutes*
 📩 You will get updated links here automatically.
 
-🔒 Sit back and relax!""",
+🔒 Sit back and relax!
+""",
         parse_mode="Markdown"
     )
 
@@ -95,7 +120,7 @@ async def main():
     await app.updater.start_polling()
     await app.updater.idle()
 
-# Run main
+# Run
 if __name__ == "__main__":
     import asyncio
     asyncio.run(main())
