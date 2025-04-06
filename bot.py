@@ -9,32 +9,36 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
-TARGET_CHANNEL_ID = int(os.getenv("TARGET_CHANNEL_ID"))  # Example: -1001234567890
+TARGET_CHANNEL_ID = int(os.getenv("TARGET_CHANNEL_ID"))  # e.g. -1001234567890
 MESSAGE_ID = int(os.getenv("MESSAGE_ID"))  # Message ID to edit
 
-# Enable logging
+# Logging
 logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s",
     level=logging.INFO
 )
 
-# Load channel list
+# Load channels list
 with open("channels.json", "r") as file:
     CHANNELS = json.load(file)
+
+# Unique emojis for each channel
+EMOJIS = ["👿", "♥️", "👻", "⚡", "🤡", "🍫", "🎯", "🌟", "💥", "🔥"]
 
 # Store last invite links
 last_links = {}
 
-# Function to create and send new invite links
+# Function to generate new links
 async def generate_links(app):
     bot = app.bot
     global last_links
 
-    updated_text = "Our Official Channels/Group 👻\n"
+    updated_text = "Our Official Channels/Group 👻\n\n"
 
-    for channel in CHANNELS:
+    for idx, channel in enumerate(CHANNELS):
+        emoji = EMOJIS[idx % len(EMOJIS)]
         try:
-            # Revoke old invite link
+            # Revoke previous link
             if channel in last_links:
                 try:
                     await bot.revoke_chat_invite_link(chat_id=channel, invite_link=last_links[channel])
@@ -46,25 +50,26 @@ async def generate_links(app):
             invite = await bot.create_chat_invite_link(chat_id=channel, creates_join_request=False)
             last_links[channel] = invite.invite_link
 
-            # Add to message update
+            # Get channel title
             chat_info = await bot.get_chat(channel)
             title = chat_info.title or "Unnamed"
-            emoji = "👿"  # Default emoji
-            updated_text += f"{title} ({invite.invite_link}) {emoji}\n"
 
-            # Send stylish message to admin
+            # Add to update text with HTML formatting
+            updated_text += f'{emoji} <a href="{invite.invite_link}">"{title}"</a>\n'
+
+            # Notify admin
             await bot.send_message(
                 chat_id=ADMIN_ID,
-                text=f"""✅ *New Invite Link Generated!*
+                text=f"""✅ <b>New Invite Link Generated!</b>
 
-*📢 Channel:* `{channel}`
-*🔗 Link:* [Join Now]({invite.invite_link})
+<b>📢 Channel:</b> <code>{channel}</code>
+<b>🔗 Link:</b> <a href="{invite.invite_link}">Join Now</a>
 
-⏱️ Auto-refresh every *10 minutes*
+⏱️ Auto-refresh every <b>10 minutes</b>
 ♻️ Old link revoked successfully
 
-🔒 _Secure & Automated by InviteLinkBot™_""",
-                parse_mode="Markdown",
+🔒 <i>Secure & Automated by InviteLinkBot™</i>""",
+                parse_mode="HTML",
                 disable_web_page_preview=True
             )
 
@@ -72,46 +77,47 @@ async def generate_links(app):
             logging.error(f"Error with {channel}: {e}")
             await bot.send_message(
                 chat_id=ADMIN_ID,
-                text=f"❌ Error with `{channel}`:\n`{e}`",
-                parse_mode="Markdown"
+                text=f"❌ Error with <code>{channel}</code>:\n<code>{e}</code>",
+                parse_mode="HTML"
             )
 
-    # Update the pinned post in your channel
+    # Update pinned channel message
     try:
         await bot.edit_message_text(
             chat_id=TARGET_CHANNEL_ID,
             message_id=MESSAGE_ID,
-            text=updated_text
+            text=updated_text,
+            parse_mode="HTML",
+            disable_web_page_preview=True
         )
         logging.info("✅ Channel message updated with new invite links.")
     except Exception as e:
         logging.error(f"❌ Failed to update channel message: {e}")
         await bot.send_message(
             chat_id=ADMIN_ID,
-            text=f"❌ Could not update message:\n`{e}`",
-            parse_mode="Markdown"
+            text=f"❌ Could not update message:\n<code>{e}</code>",
+            parse_mode="HTML"
         )
 
-# Main function
+# Bot main function
 async def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     # Start scheduler
     scheduler = AsyncIOScheduler()
-    scheduler.add_job(generate_links, "interval", minutes=1, args=[app])
+    scheduler.add_job(generate_links, "interval", minutes=10, args=[app])  # Set to 10 minutes
     scheduler.start()
 
     await app.bot.send_message(
         chat_id=ADMIN_ID,
-        text="""
-✅ *InviteLinkBot™ is now active!*
+        text="""✅ <b>InviteLinkBot™ is now active!</b>
 
-🔁 Invite links will be refreshed every *10 minutes*
+🔁 Invite links will be refreshed every <b>10 minutes</b>
 📩 You will get updated links here automatically.
 
-🔒 Sit back and relax!
+🔒 <i>Sit back and relax!</i>
 """,
-        parse_mode="Markdown"
+        parse_mode="HTML"
     )
 
     logging.info("🚀 Bot is running and scheduler started...")
