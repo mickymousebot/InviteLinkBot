@@ -38,10 +38,11 @@ A powerful Telegram bot that auto-generates new invite links, revokes old ones, 
 
 Inside `main.py`, change these variables:
 
-```python
-✅ How to set environment variables in Koyeb
+## ✅ How to set environment variables in Koyeb
 While deploying:
 
+
+```python
 BOT_TOKEN: Your bot token from @BotFather
 
 ADMIN_ID: Your own Telegram user ID (numeric)
