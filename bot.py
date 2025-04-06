@@ -6,7 +6,7 @@ from typing import Dict, List
 from threading import Event
 from dotenv import load_dotenv
 from telegram import Bot, Chat, ChatInviteLink
-from telegram.ext import Updater
+from telegram.ext import Application, ApplicationBuilder
 
 # Load environment variables
 load_dotenv()
@@ -15,7 +15,7 @@ load_dotenv()
 BOT_TOKEN = os.getenv('BOT_TOKEN')
 ADMIN_ID = int(os.getenv('ADMIN_ID'))
 CONFIG_FILE = 'channels.json'
-ROTATION_INTERVAL = 60  # 10 minutes in seconds
+ROTATION_INTERVAL = 600  # 10 minutes in seconds
 
 # Logging setup
 logging.basicConfig(
@@ -27,8 +27,7 @@ logger = logging.getLogger(__name__)
 class LinkRotatorBot:
     def __init__(self):
         self.bot = Bot(token=BOT_TOKEN)
-        self.updater = Updater(token=BOT_TOKEN, use_context=True)
-        self.job_queue = self.updater.job_queue
+        self.application = ApplicationBuilder().token(BOT_TOKEN).build()
         self.channels = self._load_channels()
         self.active_links: Dict[str, ChatInviteLink] = {}
 
@@ -142,24 +141,29 @@ class LinkRotatorBot:
                 except Exception as notify_error:
                     logger.error(f"Failed to send error notification: {notify_error}")
 
-    def start(self):
+    async def start(self):
         """Start the bot and schedule jobs"""
         logger.info("Starting Link Rotator Bot")
         
-        # Start the job queue
-        self.job_queue.run_repeating(
-            callback=self.rotate_links,
+        # Schedule the job
+        self.application.job_queue.run_repeating(
+            self.rotate_links,
             interval=ROTATION_INTERVAL,
-            first=10  # Start after 10 seconds to allow bot initialization
+            first=10
         )
         
         # Start the bot
-        self.updater.start_polling()
-        self.updater.idle()
+        await self.application.initialize()
+        await self.application.start()
+        await self.application.updater.start_polling()
+        
+        # Run until stopped
+        await self.application.stop()
 
 if __name__ == '__main__':
     try:
+        import asyncio
         bot = LinkRotatorBot()
-        bot.start()
+        asyncio.run(bot.start())
     except Exception as e:
         logger.critical(f"Bot failed to start: {e}")
